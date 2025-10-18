@@ -67,21 +67,11 @@ venv.bak/
 *.swo
 *~
 
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
 # CoreDB specific - database files (optional - remove if you want to track them)
 coredb_data/
 demo_data/
 test_db/
-*.json
 newFeatures.txt
 
-# Logs
-*.log
+myenv
