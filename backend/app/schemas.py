@@ -80,7 +80,17 @@ class TableInfo(BaseModel):
     
     name: str = Field(..., description="Table name")
     columns: List[Dict[str, Any]] = Field(..., description="Table columns")
+    primary_key: Optional[str] = Field(None, description="Primary key column")
+    foreign_keys: List[Dict[str, Any]] = Field(default_factory=list, description="Foreign key constraints")
     row_count: int = Field(..., description="Number of rows in table")
+
+
+class TablesResponse(BaseModel):
+    """Response model for tables list."""
+    
+    success: bool = Field(..., description="Whether the request succeeded")
+    tables: List[TableInfo] = Field(..., description="List of tables")
+    total: int = Field(..., description="Total number of tables")
 
 
 class DatabaseInfo(BaseModel):

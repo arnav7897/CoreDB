@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
 import axios from 'axios';
-import { Play, History, Database, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { Play, Plus, Trash2, PlayCircle, Database, Clock, CheckCircle, XCircle, Loader, HelpCircle, X, Copy, ChevronDown, ChevronRight, RefreshCw, Table, Key, Hash } from 'lucide-react';
 import config from './config';
 import './App.css';
 
@@ -24,113 +24,243 @@ interface QueryHistory {
   affected_rows: number | null;
 }
 
-interface HistoryResponse {
-  session_id: string;
-  queries: QueryHistory[];
-  total: number;
+interface Cell {
+  id: string;
+  query: string;
+  result: QueryResult | null;
+  isExecuting: boolean;
+  isCollapsed: boolean;
+}
+
+interface TableInfo {
+  name: string;
+  columns: Array<{
+    name: string;
+    type: string;
+    nullable: boolean;
+    primary_key: boolean;
+    foreign_key: string | null;
+  }>;
+  primary_key: string | null;
+  foreign_keys: Array<{
+    column: string;
+    references_table: string;
+    references_column: string;
+  }>;
+  row_count: number;
 }
 
 const App: React.FC = () => {
   // State
-  const [query, setQuery] = useState<string>(config.DEFAULT_QUERY);
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [cells, setCells] = useState<Cell[]>([
+    {
+      id: 'cell-1',
+      query: config.DEFAULT_QUERY,
+      result: null,
+      isExecuting: false,
+      isCollapsed: false
+    }
+  ]);
   const [history, setHistory] = useState<QueryHistory[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
   const [sessionId] = useState<string>(() => `session-${Date.now()}`);
-  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [showHelp, setShowHelp] = useState<boolean>(false);
+  const [isRunningAll, setIsRunningAll] = useState<boolean>(false);
+  const [tables, setTables] = useState<TableInfo[]>([]);
+  const [isLoadingTables, setIsLoadingTables] = useState<boolean>(false);
+  const [showLeftPanel, setShowLeftPanel] = useState<boolean>(true);
 
-  // Load query history on component mount
+  // Load query history and tables on component mount
   useEffect(() => {
     loadHistory();
+    loadTables();
   }, []);
 
   // Load query history
   const loadHistory = useCallback(async () => {
     try {
-      const response = await axios.get<HistoryResponse>(
-        `${config.API_BASE_URL}/api/v1/history?session_id=${sessionId}&limit=${config.MAX_HISTORY_ITEMS}`
-      );
-      setHistory(response.data.queries);
+      const response = await axios.get(`${config.API_BASE_URL}/api/v1/history`, {
+        params: { session_id: sessionId }
+      });
+      const data = response.data as { queries?: QueryHistory[] };
+      setHistory(data.queries || []);
     } catch (error) {
       console.error('Failed to load history:', error);
     }
   }, [sessionId]);
 
-  // Execute SQL query
-  const executeQuery = useCallback(async () => {
-    if (!query.trim()) return;
-
-    setLoading(true);
+  // Load tables
+  const loadTables = useCallback(async () => {
+    setIsLoadingTables(true);
     try {
-      const response = await axios.post<QueryResult>(`${config.API_BASE_URL}/api/v1/execute`, {
-        query: query.trim(),
+      const response = await axios.get(`${config.API_BASE_URL}/api/v1/tables`);
+      const data = response.data as { success: boolean; tables: TableInfo[] };
+      if (data.success) {
+        setTables(data.tables);
+      }
+    } catch (error) {
+      console.error('Failed to load tables:', error);
+    } finally {
+      setIsLoadingTables(false);
+    }
+  }, []);
+
+  // Execute query for a specific cell
+  const executeCell = useCallback(async (cellId: string) => {
+    const cell = cells.find(c => c.id === cellId);
+    if (!cell || !cell.query.trim()) return;
+
+    // Update cell to show executing state
+    setCells(prev => prev.map(c => 
+      c.id === cellId 
+        ? { ...c, isExecuting: true, result: null }
+        : c
+    ));
+
+    try {
+      const response = await axios.post(`${config.API_BASE_URL}/api/v1/execute`, {
+        query: cell.query,
         session_id: sessionId
       });
 
-      setResult(response.data);
-      
-      // Reload history to include the new query
-      await loadHistory();
+      const result: QueryResult = response.data as QueryResult;
+
+      // Update cell with result
+      setCells(prev => prev.map(c => 
+        c.id === cellId 
+          ? { ...c, result, isExecuting: false }
+          : c
+      ));
+
+      // Add to history
+      const historyItem: QueryHistory = {
+        query: cell.query,
+        timestamp: Date.now() / 1000,
+        success: result.success,
+        time_ms: result.time_ms,
+        affected_rows: result.affected_rows
+      };
+      setHistory(prev => [historyItem, ...prev.slice(0, config.MAX_HISTORY_ITEMS - 1)]);
+
+      // Refresh tables if DDL operation
+      if (result.success && (
+        cell.query.trim().toUpperCase().startsWith('CREATE TABLE') ||
+        cell.query.trim().toUpperCase().startsWith('DROP TABLE')
+      )) {
+        loadTables();
+      }
+
     } catch (error: any) {
-      setResult({
+      const errorResult: QueryResult = {
         success: false,
         result: null,
         columns: null,
         time_ms: 0,
-        message: 'Network error',
-        error: error.response?.data?.error || error.message,
-        affected_rows: 0
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [query, sessionId, loadHistory]);
+        message: null,
+        error: error.response?.data?.error || error.message || 'Unknown error',
+        affected_rows: null
+      };
 
-  // Handle keyboard shortcuts
-  const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      executeQuery();
+      setCells(prev => prev.map(c => 
+        c.id === cellId 
+          ? { ...c, result: errorResult, isExecuting: false }
+          : c
+      ));
     }
-  }, [executeQuery]);
+  }, [cells, sessionId]);
 
-  // Load query from history
-  const loadQueryFromHistory = useCallback((historyQuery: string) => {
-    setQuery(historyQuery);
-    setShowHistory(false);
+  // Execute all cells
+  const executeAllCells = useCallback(async () => {
+    setIsRunningAll(true);
+    
+    for (const cell of cells) {
+      if (cell.query.trim()) {
+        await executeCell(cell.id);
+        // Small delay between cells for better UX
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    setIsRunningAll(false);
+  }, [cells, executeCell]);
+
+  // Add new cell
+  const addCell = useCallback(() => {
+    const newCell: Cell = {
+      id: `cell-${Date.now()}`,
+      query: '',
+      result: null,
+      isExecuting: false,
+      isCollapsed: false
+    };
+    setCells(prev => [...prev, newCell]);
+  }, []);
+
+  // Delete cell
+  const deleteCell = useCallback((cellId: string) => {
+    if (cells.length <= 1) return; // Don't delete the last cell
+    setCells(prev => prev.filter(c => c.id !== cellId));
+  }, [cells.length]);
+
+  // Update cell query
+  const updateCellQuery = useCallback((cellId: string, query: string) => {
+    setCells(prev => prev.map(c => 
+      c.id === cellId ? { ...c, query } : c
+    ));
+  }, []);
+
+  // Toggle cell collapse
+  const toggleCellCollapse = useCallback((cellId: string) => {
+    setCells(prev => prev.map(c => 
+      c.id === cellId ? { ...c, isCollapsed: !c.isCollapsed } : c
+    ));
   }, []);
 
   // Reset database
   const resetDatabase = useCallback(async () => {
-    if (!window.confirm('Are you sure you want to reset the database? This will delete all data.')) {
-      return;
-    }
-
     try {
       await axios.post(`${config.API_BASE_URL}/api/v1/reset`);
-      setResult(null);
+      setCells(prev => prev.map(c => ({ ...c, result: null })));
       setHistory([]);
-      alert('Database reset successfully!');
+      loadTables(); // Refresh tables after reset
     } catch (error) {
-      alert('Failed to reset database');
+      console.error('Failed to reset database:', error);
     }
-  }, []);
+  }, [loadTables]);
 
   return (
     <div className="app">
-      <header className="app-header">
+      <header className="header">
         <div className="header-content">
           <div className="header-left">
             <Database className="header-icon" />
-            <h1>Mini SQL Playground</h1>
+            <h1>SQL Notebook</h1>
           </div>
           <div className="header-right">
             <button 
               className="btn btn-secondary" 
-              onClick={() => setShowHistory(!showHistory)}
+              onClick={() => setShowLeftPanel(!showLeftPanel)}
             >
-              <History size={16} />
-              History ({history.length})
+              <Table size={16} />
+              {showLeftPanel ? 'Hide' : 'Show'} Tables
+            </button>
+            <button 
+              className="btn btn-secondary" 
+              onClick={() => setShowHelp(true)}
+            >
+              <HelpCircle size={16} />
+              Help
+            </button>
+            <button 
+              className="btn btn-primary" 
+              onClick={executeAllCells}
+              disabled={isRunningAll}
+            >
+              {isRunningAll ? (
+                <Loader size={16} className="spinning" />
+              ) : (
+                <PlayCircle size={16} />
+              )}
+              Run All Cells
             </button>
             <button 
               className="btn btn-danger" 
@@ -142,154 +272,289 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <div className="app-content">
-        <div className="editor-section">
-          <div className="editor-header">
-            <h2>SQL Editor</h2>
-            <button 
-              className="btn btn-primary run-button" 
-              onClick={executeQuery}
-              disabled={loading || !query.trim()}
-            >
-              {loading ? (
-                <Loader className="spinner" size={16} />
-              ) : (
-                <Play size={16} />
-              )}
-              Run Query
-            </button>
-          </div>
-          
-          <div className="editor-container" onKeyDown={handleKeyDown}>
-            <MonacoEditor
-              height={config.EDITOR_HEIGHT}
-              language={config.EDITOR_LANGUAGE}
-              value={query}
-              onChange={(value) => setQuery(value || '')}
-              theme={config.EDITOR_THEME}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                lineNumbers: 'on',
-                roundedSelection: false,
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 2,
-                wordWrap: 'on',
-                suggestOnTriggerCharacters: true,
-                acceptSuggestionOnEnter: 'on',
-                quickSuggestions: true,
-                suggest: {
-                  showKeywords: true,
-                  showSnippets: true
-                }
-              }}
-            />
-          </div>
-          
-          <div className="editor-footer">
-            <small>Press Ctrl+Enter (Cmd+Enter on Mac) to run query</small>
-          </div>
-        </div>
-
-        {showHistory && (
-          <div className="history-section">
-            <div className="history-header">
-              <h3>Query History</h3>
+      <div className="main-content">
+        {showLeftPanel && (
+          <div className="left-panel">
+            <div className="panel-header">
+              <h3>Database Tables</h3>
               <button 
-                className="btn btn-small" 
-                onClick={() => setShowHistory(false)}
+                className="btn btn-small btn-secondary"
+                onClick={loadTables}
+                disabled={isLoadingTables}
               >
-                Close
+                {isLoadingTables ? (
+                  <Loader size={14} className="spinning" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
               </button>
             </div>
-            <div className="history-list">
-              {history.length === 0 ? (
-                <p className="no-history">No queries executed yet</p>
+            <div className="panel-content">
+              {tables.length === 0 ? (
+                <div className="no-tables">
+                  <p>No tables found</p>
+                  <p className="hint">Create tables using CREATE TABLE statements</p>
+                </div>
               ) : (
-                history.map((item, index) => (
-                  <div 
-                    key={index} 
-                    className={`history-item ${item.success ? 'success' : 'error'}`}
-                    onClick={() => loadQueryFromHistory(item.query)}
-                  >
-                    <div className="history-item-header">
-                      <div className="history-status">
-                        {item.success ? (
-                          <CheckCircle size={14} className="success-icon" />
-                        ) : (
-                          <XCircle size={14} className="error-icon" />
-                        )}
-                        <span className="history-time">
-                          {new Date(item.timestamp * 1000).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <div className="history-meta">
-                        <Clock size={12} />
-                        <span>{item.time_ms.toFixed(2)}ms</span>
-                        {item.affected_rows !== null && (
-                          <span className="affected-rows">
-                            ({item.affected_rows} rows)
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="history-query">
-                      {item.query.length > 100 
-                        ? `${item.query.substring(0, 100)}...` 
-                        : item.query
-                      }
-                    </div>
-                  </div>
-                ))
+                <div className="tables-list">
+                  {tables.map((table) => (
+                    <TableItem key={table.name} table={table} />
+                  ))}
+                </div>
               )}
             </div>
           </div>
         )}
-
-        {result && (
-          <div className="result-section">
-            <div className="result-header">
-              <h3>Query Result</h3>
-              <div className="result-meta">
-                <div className={`result-status ${result.success ? 'success' : 'error'}`}>
-                  {result.success ? (
-                    <CheckCircle size={16} className="success-icon" />
+        
+        <div className="notebook-container">
+        {cells.map((cell, index) => (
+          <div key={cell.id} className="cell">
+            <div className="cell-header">
+              <div className="cell-number">
+                [{index + 1}]
+              </div>
+              <div className="cell-controls">
+                <button 
+                  className="btn btn-small btn-primary"
+                  onClick={() => executeCell(cell.id)}
+                  disabled={cell.isExecuting || !cell.query.trim()}
+                >
+                  {cell.isExecuting ? (
+                    <Loader size={14} className="spinning" />
                   ) : (
-                    <XCircle size={16} className="error-icon" />
+                    <Play size={14} />
                   )}
-                  <span>{result.success ? 'Success' : 'Error'}</span>
-                </div>
-                <div className="result-time">
-                  <Clock size={14} />
-                  <span>{result.time_ms.toFixed(2)}ms</span>
-                </div>
-                {result.affected_rows !== null && (
-                  <div className="result-rows">
-                    {result.affected_rows} row(s) affected
-                  </div>
-                )}
+                  Run
+                </button>
+                <button 
+                  className="btn btn-small btn-secondary"
+                  onClick={() => toggleCellCollapse(cell.id)}
+                >
+                  {cell.isCollapsed ? (
+                    <ChevronRight size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )}
+                </button>
+                <button 
+                  className="btn btn-small btn-danger"
+                  onClick={() => deleteCell(cell.id)}
+                  disabled={cells.length <= 1}
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
             </div>
 
-            {result.success && result.result ? (
-              <div className="result-table-container">
-                <ResultTable data={result.result} columns={result.columns} />
+            <div className={`cell-content ${cell.isCollapsed ? 'collapsed' : ''}`}>
+              <div className="cell-input">
+                <MonacoEditor
+                  height={cell.isCollapsed ? "0px" : "150px"}
+                  language={config.EDITOR_LANGUAGE}
+                  theme={config.EDITOR_THEME}
+                  value={cell.query}
+                  onChange={(value) => updateCellQuery(cell.id, value || '')}
+                  options={{
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    fontSize: 14,
+                    lineNumbers: 'on',
+                    wordWrap: 'on',
+                    automaticLayout: true,
+                    tabSize: 2,
+                    insertSpaces: true,
+                    renderLineHighlight: 'line',
+                    selectOnLineNumbers: true,
+                    roundedSelection: false,
+                    readOnly: false,
+                    cursorStyle: 'line',
+                    glyphMargin: false,
+                    folding: true,
+                    lineDecorationsWidth: 0,
+                    lineNumbersMinChars: 3,
+                    renderWhitespace: 'selection',
+                    scrollbar: {
+                      vertical: 'auto',
+                      horizontal: 'auto',
+                      verticalScrollbarSize: 8,
+                      horizontalScrollbarSize: 8
+                    }
+                  }}
+                />
               </div>
-            ) : (
-              <div className="result-error">
-                <p><strong>Error:</strong> {result.error || result.message}</p>
-              </div>
-            )}
 
-            {result.message && result.success && (
-              <div className="result-message">
-                <p>{result.message}</p>
-              </div>
-            )}
+              {cell.result && (
+                <div className="cell-output">
+                  <div className="output-header">
+                    <div className={`output-status ${cell.result.success ? 'success' : 'error'}`}>
+                      {cell.result.success ? (
+                        <CheckCircle size={16} className="success-icon" />
+                      ) : (
+                        <XCircle size={16} className="error-icon" />
+                      )}
+                      <span>{cell.result.success ? 'Success' : 'Error'}</span>
+                    </div>
+                    <div className="output-meta">
+                      <Clock size={14} />
+                      <span>{cell.result.time_ms.toFixed(2)}ms</span>
+                      {cell.result.affected_rows !== null && (
+                        <span className="affected-rows">
+                          ({cell.result.affected_rows} rows)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {cell.result.success && cell.result.result && cell.result.result.length > 0 ? (
+                    <div className="result-table-container">
+                      <ResultTable data={cell.result.result} columns={cell.result.columns} />
+                    </div>
+                  ) : cell.result.success ? (
+                    <div className="result-message">
+                      <p>{cell.result.message}</p>
+                    </div>
+                  ) : (
+                    <div className="result-error">
+                      <p><strong>Error:</strong> {cell.result.error || cell.result.message}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        ))}
+
+        <div className="add-cell-container">
+          <button className="add-cell-btn" onClick={addCell}>
+            <Plus size={16} />
+            Add Cell
+          </button>
+        </div>
+        </div>
       </div>
+
+      {/* Help Modal */}
+      {showHelp && (
+        <div className="help-modal">
+          <div className="help-content">
+            <div className="help-header">
+              <h2>SQL Commands Reference</h2>
+              <button 
+                className="btn btn-small" 
+                onClick={() => setShowHelp(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="help-body">
+              <div className="help-section">
+                <h3>Data Types</h3>
+                <ul>
+                  <li><code>INT</code> - Integer numbers</li>
+                  <li><code>TEXT</code> - Text strings</li>
+                  <li><code>FLOAT</code> - Floating-point numbers</li>
+                  <li><code>BOOLEAN</code> - True/false values</li>
+                </ul>
+              </div>
+
+              <div className="help-section">
+                <h3>CREATE TABLE</h3>
+                <div className="help-example">
+                  <pre><code>{`CREATE TABLE users (
+    id INT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT,
+    age INT
+);`}</code></pre>
+                </div>
+                <p>Creates a new table with specified columns and constraints.</p>
+              </div>
+
+              <div className="help-section">
+                <h3>INSERT INTO</h3>
+                <div className="help-example">
+                  <pre><code>{`INSERT INTO users VALUES (1, 'Alice', 'alice@example.com', 25);
+INSERT INTO users (id, name, age) VALUES (2, 'Bob', 30);`}</code></pre>
+                </div>
+                <p>Inserts new rows into a table.</p>
+              </div>
+
+              <div className="help-section">
+                <h3>SELECT</h3>
+                <div className="help-example">
+                  <pre><code>{`SELECT * FROM users;
+SELECT name, age FROM users WHERE age > 25;
+SELECT COUNT(*) as total FROM users;
+SELECT u.name, o.amount 
+FROM users u 
+JOIN orders o ON u.id = o.user_id;`}</code></pre>
+                </div>
+                <p>Retrieves data from tables. Supports WHERE, JOIN, GROUP BY, ORDER BY, and aggregate functions.</p>
+              </div>
+
+              <div className="help-section">
+                <h3>UPDATE</h3>
+                <div className="help-example">
+                  <pre><code>{`UPDATE users SET age = 26 WHERE id = 1;
+UPDATE users SET name = 'Alice Updated' WHERE age > 25;`}</code></pre>
+                </div>
+                <p>Modifies existing rows in a table.</p>
+              </div>
+
+              <div className="help-section">
+                <h3>DELETE</h3>
+                <div className="help-example">
+                  <pre><code>{`DELETE FROM users WHERE age < 18;
+DELETE FROM users WHERE id = 1;`}</code></pre>
+                </div>
+                <p>Removes rows from a table.</p>
+              </div>
+
+              <div className="help-section">
+                <h3>DROP TABLE</h3>
+                <div className="help-example">
+                  <pre><code>{`DROP TABLE users;`}</code></pre>
+                </div>
+                <p>Removes a table completely from the database.</p>
+              </div>
+
+              <div className="help-section">
+                <h3>Advanced Features</h3>
+                <ul>
+                  <li><strong>Foreign Keys:</strong> <code>customer_id INT REFERENCES customers(id)</code></li>
+                  <li><strong>JOINs:</strong> INNER, LEFT, RIGHT, FULL OUTER JOIN</li>
+                  <li><strong>Aggregates:</strong> COUNT, SUM, AVG, MAX, MIN</li>
+                  <li><strong>Column Aliases:</strong> <code>SELECT name AS user_name FROM users</code></li>
+                  <li><strong>Table Aliases:</strong> <code>SELECT u.name FROM users u</code></li>
+                  <li><strong>WHERE Conditions:</strong> <code>=, !=, &lt;, &gt;, &lt;=, &gt;=, BETWEEN, AND, OR</code></li>
+                </ul>
+              </div>
+
+              <div className="help-section">
+                <h3>Notebook Features</h3>
+                <ul>
+                  <li><strong>Run Cell:</strong> Execute individual cell with Run button</li>
+                  <li><strong>Run All:</strong> Execute all cells in sequence</li>
+                  <li><strong>Add Cell:</strong> Create new cells for different queries</li>
+                  <li><strong>Collapse:</strong> Hide/show cell content</li>
+                  <li><strong>Delete:</strong> Remove unwanted cells</li>
+                </ul>
+              </div>
+
+              <div className="help-section">
+                <h3>Keyboard Shortcuts</h3>
+                <ul>
+                  <li><kbd>Ctrl+Enter</kbd> (or <kbd>Cmd+Enter</kbd> on Mac) - Execute query</li>
+                  <li><kbd>Ctrl+/</kbd> - Toggle comment</li>
+                  <li><kbd>Ctrl+Z</kbd> - Undo</li>
+                  <li><kbd>Ctrl+Y</kbd> - Redo</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -302,10 +567,9 @@ interface ResultTableProps {
 
 const ResultTable: React.FC<ResultTableProps> = ({ data, columns }) => {
   if (!data || data.length === 0) {
-    return <div className="no-data">No data returned</div>;
+    return <div className="no-data">No data to display</div>;
   }
 
-  // Get column names from data if not provided
   const tableColumns = columns || Object.keys(data[0] || {});
 
   return (
@@ -322,17 +586,75 @@ const ResultTable: React.FC<ResultTableProps> = ({ data, columns }) => {
           {data.map((row, rowIndex) => (
             <tr key={rowIndex}>
               {tableColumns.map((col, colIndex) => (
-                <td key={colIndex}>
-                  {row[col] !== null && row[col] !== undefined 
-                    ? String(row[col]) 
-                    : <span className="null-value">NULL</span>
-                  }
-                </td>
+                <td key={colIndex}>{String(row[col] ?? '')}</td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+};
+
+// Table Item Component
+interface TableItemProps {
+  table: TableInfo;
+}
+
+const TableItem: React.FC<TableItemProps> = ({ table }) => {
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+
+  return (
+    <div className="table-item">
+      <div className="table-header" onClick={() => setIsExpanded(!isExpanded)}>
+        <div className="table-name">
+          <Table size={14} />
+          <span>{table.name}</span>
+          <span className="row-count">({table.row_count} rows)</span>
+        </div>
+        <div className="table-toggle">
+          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </div>
+      </div>
+      
+      {isExpanded && (
+        <div className="table-schema">
+          <div className="schema-section">
+            <h4>Columns</h4>
+            <div className="columns-list">
+              {table.columns.map((column, index) => (
+                <div key={index} className="column-item">
+                  <div className="column-info">
+                    <span className="column-name">{column.name}</span>
+                    <span className="column-type">{column.type}</span>
+                    {column.primary_key && (
+                      <Key size={12} className="primary-key-icon" />
+                    )}
+                    {!column.nullable && (
+                      <span className="not-null">NOT NULL</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          {table.foreign_keys && table.foreign_keys.length > 0 && (
+            <div className="schema-section">
+              <h4>Foreign Keys</h4>
+              <div className="foreign-keys-list">
+                {table.foreign_keys.map((fk, index) => (
+                  <div key={index} className="foreign-key-item">
+                    <span className="fk-column">{fk.column}</span>
+                    <span className="fk-arrow">→</span>
+                    <span className="fk-reference">{fk.references_table}.{fk.references_column}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

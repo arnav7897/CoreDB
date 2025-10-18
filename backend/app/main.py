@@ -12,6 +12,7 @@ import time
 from contextlib import asynccontextmanager
 
 from .api.execute import router as execute_router
+from .api.tables import router as tables_router
 from .config import settings
 
 # Configure logging
@@ -49,6 +50,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(execute_router, prefix="/api/v1")
+app.include_router(tables_router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -60,7 +62,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "execute": "POST /api/v1/execute",
-            "history": "GET /api/v1/history",
+            "tables": "GET /api/v1/tables",
             "health": "GET /health"
         }
     }
