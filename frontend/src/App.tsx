@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
 import axios from 'axios';
-import { Play, Plus, Trash2, PlayCircle, Database, Clock, CheckCircle, XCircle, Loader, HelpCircle, X, Copy, ChevronDown, ChevronRight, RefreshCw, Table, Key, Hash } from 'lucide-react';
+import { Play, Plus, Trash2, PlayCircle, Database, Clock, CheckCircle, XCircle, Loader, HelpCircle, X, Copy, ChevronDown, ChevronRight, RefreshCw, Table, Key, Hash, MessageCircle, Send, Sparkles } from 'lucide-react';
 import config from './config';
 import './App.css';
 
@@ -50,6 +50,13 @@ interface TableInfo {
   row_count: number;
 }
 
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
 const App: React.FC = () => {
   // State
   const [cells, setCells] = useState<Cell[]>([
@@ -68,6 +75,17 @@ const App: React.FC = () => {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [isLoadingTables, setIsLoadingTables] = useState<boolean>(false);
   const [showLeftPanel, setShowLeftPanel] = useState<boolean>(true);
+  const [showNoobMode, setShowNoobMode] = useState<boolean>(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content: 'Hi! 👋 I\'m your SQL learning assistant. Ask me anything about SQL, database concepts, or help with writing queries!',
+      timestamp: Date.now()
+    }
+  ]);
+  const [chatInput, setChatInput] = useState<string>('');
+  const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
 
   // Load query history and tables on component mount
   useEffect(() => {
@@ -227,6 +245,51 @@ const App: React.FC = () => {
     }
   }, [loadTables]);
 
+  // Handle chat message
+  const sendChatMessage = useCallback(async () => {
+    if (!chatInput.trim() || isChatLoading) return;
+
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: chatInput.trim(),
+      timestamp: Date.now()
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsChatLoading(true);
+
+    try {
+      const response = await axios.post(`${config.API_BASE_URL}/api/v1/chat`, {
+        message: userMessage.content,
+        session_id: sessionId
+      });
+
+      const data = response.data as { response: string; timestamp: number };
+
+      const assistantMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: data.response,
+        timestamp: Date.now()
+      };
+
+      setChatMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Failed to send chat message:', error);
+      const errorMessage: ChatMessage = {
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: 'Sorry, I encountered an error. Please try again.',
+        timestamp: Date.now()
+      };
+      setChatMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  }, [chatInput, isChatLoading, sessionId]);
+
   return (
     <div className="app">
       <header className="header">
@@ -242,6 +305,13 @@ const App: React.FC = () => {
             >
               <Table size={16} />
               {showLeftPanel ? 'Hide' : 'Show'} Tables
+            </button>
+            <button 
+              className="btn btn-secondary btn-noob" 
+              onClick={() => setShowNoobMode(!showNoobMode)}
+            >
+              <Sparkles size={16} />
+              Noob Mode
             </button>
             <button 
               className="btn btn-secondary" 
@@ -433,6 +503,104 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* Noob Mode Chatbot */}
+      {showNoobMode && (
+        <div className="noob-chatbot">
+          <div className="chatbot-container">
+            <div className="chatbot-header">
+              <div className="chatbot-title">
+                <Sparkles size={20} />
+                <h3>SQL Learning Assistant</h3>
+              </div>
+              <button 
+                className="btn btn-small chatbot-close-btn" 
+                onClick={() => setShowNoobMode(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="chatbot-messages">
+              {chatMessages.map((message) => (
+                <div 
+                  key={message.id} 
+                  className={`chat-message ${message.role === 'user' ? 'user-message' : 'assistant-message'}`}
+                >
+                  <div className="message-icon">
+                    {message.role === 'user' ? (
+                      <div className="user-avatar">You</div>
+                    ) : (
+                      <MessageCircle size={20} />
+                    )}
+                  </div>
+                  <div className="message-content">
+                    <div className="message-text">{message.content}</div>
+                    <div className="message-time">
+                      {new Date(message.timestamp).toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {isChatLoading && (
+                <div className="chat-message assistant-message">
+                  <div className="message-icon">
+                    <Loader size={20} className="spinning" />
+                  </div>
+                  <div className="message-content">
+                    <div className="message-text typing-indicator">
+                      <span></span><span></span><span></span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="chatbot-input-container">
+              <input
+                type="text"
+                className="chatbot-input"
+                placeholder="Ask me anything about SQL..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                disabled={isChatLoading}
+              />
+              <button 
+                className="btn btn-primary send-btn" 
+                onClick={sendChatMessage}
+                disabled={isChatLoading || !chatInput.trim()}
+              >
+                <Send size={18} />
+              </button>
+            </div>
+            
+            <div className="chatbot-suggestions">
+              <p>Quick questions:</p>
+              <div className="suggestion-chips">
+                <button 
+                  className="suggestion-chip"
+                  onClick={() => setChatInput('What is a PRIMARY KEY?')}
+                >
+                  What is PRIMARY KEY?
+                </button>
+                <button 
+                  className="suggestion-chip"
+                  onClick={() => setChatInput('How do I use JOIN?')}
+                >
+                  How do I use JOIN?
+                </button>
+                <button 
+                  className="suggestion-chip"
+                  onClick={() => setChatInput('Explain SELECT statement')}
+                >
+                  Explain SELECT
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Help Modal */}
       {showHelp && (
         <div className="help-modal">
@@ -440,7 +608,7 @@ const App: React.FC = () => {
             <div className="help-header">
               <h2>SQL Commands Reference</h2>
               <button 
-                className="btn btn-small" 
+                className="btn btn-small help-close-btn" 
                 onClick={() => setShowHelp(false)}
               >
                 <X size={16} />

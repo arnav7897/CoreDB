@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from .api.execute import router as execute_router
 from .api.tables import router as tables_router
+from .api.chat import router as chat_router
 from .config import settings
 
 # Configure logging
@@ -51,6 +52,7 @@ app.add_middleware(
 # Include routers
 app.include_router(execute_router, prefix="/api/v1")
 app.include_router(tables_router, prefix="/api/v1")
+app.include_router(chat_router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -63,6 +65,7 @@ async def root():
         "endpoints": {
             "execute": "POST /api/v1/execute",
             "tables": "GET /api/v1/tables",
+            "chat": "POST /api/v1/chat",
             "health": "GET /health"
         }
     }
