@@ -233,7 +233,7 @@ const App: React.FC = () => {
         <div className="header-content">
           <div className="header-left">
             <Database className="header-icon" />
-            <h1>SQL Notebook</h1>
+            <h1>DataForge</h1>
           </div>
           <div className="header-right">
             <button 
