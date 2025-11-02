@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from ..schemas import ExecuteRequest, ExecuteResponse, HistoryRequest, HistoryResponse, ErrorResponse
 from ..engine.executor import QueryExecutor
 from ..engine.storage import StorageManager
+from ..engine.indexed_storage import IndexedStorageManager
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -18,8 +19,11 @@ logger = logging.getLogger(__name__)
 # Create router
 router = APIRouter()
 
-# Global storage manager instance
-storage_manager = StorageManager(settings.DB_PATH)
+# Global storage manager instance (switchable)
+if settings.STORAGE_MODE.lower() == "indexed":
+    storage_manager = IndexedStorageManager(settings.DB_PATH)
+else:
+    storage_manager = StorageManager(settings.DB_PATH)
 query_executor = QueryExecutor(storage_manager)
 
 # In-memory session storage for query history

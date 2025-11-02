@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # Database Settings
     DB_PATH: str = "coredb_data"
     DB_PERSISTENCE: bool = True
+    # Storage mode: 'json' or 'indexed'
+    STORAGE_MODE: str = "indexed"
     
     # Session Settings
     SESSION_TIMEOUT: int = 3600  # 1 hour

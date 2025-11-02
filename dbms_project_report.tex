@@ -1,0 +1,136 @@
+% CoreDB DBMS Course Project Report
+\documentclass[12pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{times}
+\usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\definecolor{codebg}{RGB}{247,248,250}
+\lstset{basicstyle=\ttfamily\small,backgroundcolor=\color{codebg},frame=single,breaklines=true}
+\onehalfspacing
+
+\begin{document}
+
+% Title Page
+\begin{titlepage}
+  \centering
+  {\Large Indian Institute of Information Technology, Design and Manufacturing, Kurnool\\}
+  {\large Department of Computer Science and Engineering\\[2em]}
+  {\LARGE DBMS Course Project Report\\[0.5em]}
+  {\Large CoreDB: A Lightweight SQL Engine\\[3em]}
+
+  \begin{tabular}{ll}
+    \textbf{Course}: & Database Management Systems \\
+    \textbf{Faculty}: & Dr. N. Srinivas Naik \\
+    \textbf{Students}: & Arnav Sharda (123CS0064) \\
+                       & Rohit Chauhan (123CS0054) \\
+  \end{tabular}
+
+  \vfill
+  {\large \today}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{Problem Statement}
+Design and implement a minimal yet functional SQL database management system (DBMS) in Python, named CoreDB, with: a lexer, parser, executor, schema and storage engine (JSON-backed), JOINs, GROUP BY, ORDER BY, DISTINCT, aggregate functions, foreign keys, aliases, BETWEEN, UPDATE/DELETE with WHERE, DROP TABLE, and an \\textit{indexed} storage option for faster lookups. Provide a REST backend (FastAPI) and a React frontend featuring a Jupyter-like notebook UI, history, help, and a beginner-friendly chatbot (``Noob Mode'').
+
+\section{Introduction}
+CoreDB is a teaching-oriented, lightweight SQL engine built from scratch to illustrate DBMS internals end-to-end: lexical analysis, parsing into an AST, logical execution, and persistence. It exposes a simple REST API and a modern web UI to run SQL interactively, visualize results, inspect schemas, and learn relational concepts. Storage is file-based (JSON) by default and can be switched to an \\textit{indexed} mode that adds on-disk indexes for faster equality lookups while keeping JSON data files as the source of truth.
+
+\section{Literature Survey}
+We surveyed reference implementations and documentation to ground our design:
+\begin{itemize}[leftmargin=*,nosep]
+  \item SQLite Architecture Overview (SQLite docs): modular design, B-tree storage, SQL parser and virtual machine.
+  \item PostgreSQL Documentation: optimizer concepts (JOIN strategies, indexes), MVCC, extensibility.
+  \item ``Database System Concepts'' (Silberschatz et al.): relational algebra, normalization, query processing.
+  \item FastAPI and Pydantic documentation: modern Python API development patterns.
+\end{itemize}
+These sources shaped our separation of concerns (lexer/parser/executor/storage), error handling, and API contracts while keeping the implementation intentionally simplified for pedagogy.
+
+\section{Gaps / Findings}
+\begin{itemize}[leftmargin=*,nosep]
+  \item Full-featured DBMSs hide complexity. A small, readable engine helps students connect theory to practice.
+  \item Pure JSON storage is approachable but slow for selective lookups; adding simple on-disk indexes improves real workloads while preserving simplicity.
+  \item Educational UIs (cells, history, help, chatbot) significantly improve adoption and learning outcomes.
+\end{itemize}
+
+\section{Methodology}
+\subsection{Data Model and Constraints}
+CoreDB supports basic types (INT, TEXT, FLOAT, BOOLEAN), NOT NULL, PRIMARY KEY, FOREIGN KEY. Foreign keys are validated on INSERT; UPDATE/DELETE respect WHERE.
+
+\subsection{ER View and Relations}
+Entities are defined as tables. Example:
+\begin{lstlisting}
+CREATE TABLE users (id INT PRIMARY KEY, name TEXT, email TEXT);
+CREATE TABLE orders (id INT PRIMARY KEY, user_id INT REFERENCES users(id), amount FLOAT);
+\end{lstlisting}
+
+\subsection{Relational Operators}
+Selection (WHERE), projection (column lists), joins (INNER/LEFT/RIGHT/FULL OUTER), grouping (GROUP BY/HAVING), ordering, DISTINCT, aggregates (COUNT/SUM/AVG/MAX/MIN).
+
+\subsection{Query Processing}
+\begin{enumerate}[leftmargin=*,nosep]
+  \item Lexer tokenizes SQL.
+  \item Parser builds an AST (statements, expressions, conditions).
+  \item Executor interprets the AST, orchestrates joins, grouping, ordering, and delegates persistence to storage.
+  \item Storage validates constraints and persists/loads JSON rows (or performs indexed filtering when enabled).
+\end{enumerate}
+
+\section{Code Implementation}
+\subsection{Core Engine}
+\textbf{Lexer/Parser}: Recognize DDL/DML/queries (CREATE, INSERT, SELECT, UPDATE, DELETE, DROP), JOINs, BETWEEN, aliases, aggregates.\\
+\textbf{Executor}: Implements SELECT pipeline (JOIN, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, DISTINCT), UPDATE/DELETE with WHERE, and DROP TABLE.\\
+\textbf{Storage}: JSON storage manager handles schema (schema.json) and per-table data files. WHERE evaluation is shared with executor for consistency.
+
+\subsection{Indexed Storage (New)}
+\textbf{Goal}: keep JSON files for data, add on-disk JSON indexes to accelerate equality predicates.\\
+\textbf{Layout}: \texttt{coredb\_data/indexes/{table}/{column}.json} maps \emph{column value} $\to$ \emph{list of primary-key values}.\\
+\textbf{Build \\& Maintenance}:\
+\begin{itemize}[leftmargin=*,nosep]
+  \item On CREATE TABLE (if PRIMARY KEY exists): build PK index.
+  \item On INSERT/UPDATE/DELETE: refresh affected indexes.
+\end{itemize}
+\textbf{Indexed SELECT}: For single-condition equality (e.g., \texttt{WHERE col = value}), the executor loads the index, gets matching PKs, and filters rows by PK (fast). Falls back to full scan if no usable index.
+
+\subsection{Backend}
+FastAPI app with endpoints: \texttt{/api/v1/execute}, \texttt{/api/v1/history}, \texttt{/api/v1/tables}, \texttt{/api/v1/reset}, \texttt{/api/v1/chat}. Pydantic models enforce contracts. Configurable \texttt{STORAGE\_MODE} (\texttt{json} or \texttt{indexed}).
+
+\subsection{Frontend}
+React + TypeScript app with Monaco Editor, cell-based (notebook-style) UI, per-cell execution, run-all, history, help modal, left-panel schema browser, and a beginner ``Noob Mode'' chatbot.
+
+\section{Results}
+\subsection{Functional Coverage}
+All requested SQL features are implemented and verified via API tests and interactive usage. The frontend reliably renders results, messages, and errors, and the help/Noob Mode improve usability.
+
+\subsection{Indexed vs JSON Storage}
+\begin{itemize}[leftmargin=*,nosep]
+  \item \textbf{JSON mode}: simple full-table scans; predictable and robust.
+  \item \textbf{Indexed mode}: adds index files and accelerates equality lookups (e.g., by PRIMARY KEY). For non-indexable predicates, performance matches JSON mode.
+\end{itemize}
+
+\section{Conclusion \& Future Work}
+CoreDB demonstrates the architecture of a small SQL engine and its end-to-end path from query to persistence with a friendly UI. The new index layer offers a pragmatic speed-up while retaining JSON simplicity.
+
+\textbf{Future work}: secondary indexes selection, composite and range indexes (BETWEEN/ORDER BY), basic cost-based planning, transactions/ACID logging, constraints beyond FK/PK (UNIQUE, CHECK), and CSV/Parquet import/export.
+
+\section{References}
+\begin{enumerate}[leftmargin=*,nosep]
+  \item SQLite Documentation. \url{https://www.sqlite.org/arch.html}
+  \item PostgreSQL 16 Documentation. \url{https://www.postgresql.org/docs/}
+  \item Silberschatz, Korth, Sudarshan. Database System Concepts, 7e.
+  \item FastAPI Documentation. \url{https://fastapi.tiangolo.com/}
+  \item Pydantic/Pydantic-settings Docs. \url{https://docs.pydantic.dev/}
+\end{enumerate}
+
+\vspace{1em}
+\noindent \textit{Note}: Mermaid diagrams are included in \texttt{mermaid.md} for repository-native preview.
+
+\end{document}
+
+
