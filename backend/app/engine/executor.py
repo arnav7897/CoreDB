@@ -197,9 +197,7 @@ class QueryExecutor:
                 table_ref = stmt.table_alias if stmt.table_alias else stmt.table_name
                 data = self._apply_where_clause(data, stmt.where_clause, table_ref)
         
-        # Apply DISTINCT if specified
-        if stmt.distinct:
-            data = self._apply_distinct(data)
+   
         
         # Apply GROUP BY if specified
         if stmt.group_by:
@@ -219,8 +217,14 @@ class QueryExecutor:
         
         # Apply column selection (this must be done last)
         # Only apply if we didn't already do it in JOIN execution
-        if '*' not in stmt.columns and not stmt.joins:
+        # Apply column selection only if not grouped
+        if not stmt.group_by and '*' not in stmt.columns and not stmt.joins:
             data = self._select_columns(data, stmt.columns)
+
+
+             # Apply DISTINCT if specified
+        if stmt.distinct:
+            data = self._apply_distinct(data)
         
         return QueryResult(
             success=True,
@@ -783,28 +787,40 @@ class QueryExecutor:
                     func_name = col_expr.split('(')[0].upper()
                     if func_name in ['COUNT', 'SUM', 'AVG', 'MAX', 'MIN']:
                         # Extract column name from function
+                        if ' AS ' in col_expr:
+                            alias_name = col_expr.split(' AS ')[1].strip()
+                        else:
+                            alias_name = col_expr
+                        
                         if 'COUNT(*)' in col_expr:
-                            result_row[col_expr] = len(group_rows)
+                            result_row[alias_name] = len(group_rows)
                         elif 'COUNT(DISTINCT' in col_expr:
-                            # Handle COUNT(DISTINCT column)
                             col_name = col_expr.split('DISTINCT ')[1].split(')')[0]
                             distinct_values = set(row.get(col_name) for row in group_rows if row.get(col_name) is not None)
-                            result_row[col_expr] = len(distinct_values)
+                            result_row[alias_name] = len(distinct_values)
+
                         else:
                             # Extract column name from function
                             col_name = col_expr.split('(')[1].split(')')[0]
                             values = [row.get(col_name) for row in group_rows if row.get(col_name) is not None]
-                            
+                            # Detect alias (e.g., COUNT(*) AS total_users)
+                            if ' AS ' in col_expr:
+                                alias_name = col_expr.split(' AS ')[1].strip()
+                            else:
+                                alias_name = col_expr  # fallback
+
+                            # Handle aggregate functions
                             if func_name == 'COUNT':
-                                result_row[col_expr] = len(values)
+                                result_row[alias_name] = len(values)
                             elif func_name == 'SUM':
-                                result_row[col_expr] = sum(values) if values else 0
+                                result_row[alias_name] = sum(values) if values else 0
                             elif func_name == 'AVG':
-                                result_row[col_expr] = sum(values) / len(values) if values else 0
+                                result_row[alias_name] = sum(values) / len(values) if values else 0
                             elif func_name == 'MAX':
-                                result_row[col_expr] = max(values) if values else None
+                                result_row[alias_name] = max(values) if values else None
                             elif func_name == 'MIN':
-                                result_row[col_expr] = min(values) if values else None
+                                result_row[alias_name] = min(values) if values else None
+
                 else:
                     # Regular column - take first value from group
                     result_row[col_expr] = group_rows[0].get(col_expr) if group_rows else None
